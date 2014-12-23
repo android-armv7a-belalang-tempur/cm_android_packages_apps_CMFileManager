@@ -18,6 +18,7 @@ package com.cyanogenmod.filemanager.adapters;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,27 +26,35 @@ import android.widget.ArrayAdapter;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import com.cyanogenmod.filemanager.FileManagerApplication;
 import com.cyanogenmod.filemanager.R;
 import com.cyanogenmod.filemanager.model.FileSystemObject;
 import com.cyanogenmod.filemanager.model.Query;
 import com.cyanogenmod.filemanager.model.SearchResult;
+import com.cyanogenmod.filemanager.preferences.AccessMode;
+import com.cyanogenmod.filemanager.preferences.DisplayRestrictions;
 import com.cyanogenmod.filemanager.preferences.FileManagerSettings;
 import com.cyanogenmod.filemanager.preferences.Preferences;
 import com.cyanogenmod.filemanager.ui.IconHolder;
 import com.cyanogenmod.filemanager.ui.ThemeManager;
 import com.cyanogenmod.filemanager.ui.ThemeManager.Theme;
 import com.cyanogenmod.filemanager.ui.widgets.RelevanceView;
+import com.cyanogenmod.filemanager.util.FileHelper;
 import com.cyanogenmod.filemanager.util.MimeTypeHelper;
 import com.cyanogenmod.filemanager.util.SearchHelper;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * An implementation of {@link ArrayAdapter} for display search results.
  */
 public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
+
+    private MimeTypeHelper.MimeTypeCategory mMimeFilter = MimeTypeHelper.MimeTypeCategory.NONE;
 
     /**
      * A class that conforms with the ViewHolder pattern to performance
@@ -62,6 +71,7 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
         TextView mTvName;
         TextView mTvParentDir;
         RelevanceView mWgRelevance;
+        TextView mMimeType;
     }
 
     /**
@@ -78,6 +88,7 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
         CharSequence mName;
         String mParentDir;
         Float mRelevance;
+        MimeTypeHelper.MimeTypeCategory mimeTypeCategory;
     }
 
     private DataHolder[] mData;
@@ -88,6 +99,7 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
     private final boolean mShowRelevanceWidget;
 
     private final List<String> mQueries;
+    private final List<SearchResult> mOriginalList;
 
     private boolean mDisposed;
 
@@ -99,6 +111,8 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
     private static final int RESOURCE_ITEM_PARENT_DIR = R.id.search_item_parent_dir;
     //The resource of the item relevance
     private static final int RESOURCE_ITEM_RELEVANCE = R.id.search_item_relevance;
+    //The resource of the item mime type
+    private static final int RESOURCE_ITEM_MIME_TYPE = R.id.search_item_mime_type;
 
     /**
      * Constructor of <code>SearchResultAdapter</code>.
@@ -112,6 +126,9 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
     public SearchResultAdapter(
             Context context, List<SearchResult> files, int itemViewResourceId, Query queries) {
         super(context, RESOURCE_ITEM_NAME, files);
+
+        mOriginalList = new ArrayList<SearchResult>(files);
+
         this.mDisposed = false;
         final boolean displayThumbs = Preferences.getSharedPreferences().getBoolean(
                 FileManagerSettings.SETTINGS_DISPLAY_THUMBS.getId(),
@@ -156,6 +173,38 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
     }
 
     /**
+     * Method that allows filtering the results by {@link MimeTypeHelper.MimeTypeCategory}
+     * @param mimeFilter the MimeTypeCategory to filter by
+     */
+    public void setMimeFilter(String mimeFilter) {
+        // Are we in ChRooted environment?
+        boolean chRooted =
+                FileManagerApplication.getAccessMode().compareTo(AccessMode.SAFE) == 0;
+
+        // Create display restrictions
+        Map<DisplayRestrictions, Object> restrictions =
+                new HashMap<DisplayRestrictions, Object>();
+        restrictions.put(
+                DisplayRestrictions.MIME_TYPE_RESTRICTION, MimeTypeHelper.ALL_MIME_TYPES);
+
+        List<SearchResult> newResults = SearchHelper.convertToResults(
+                FileHelper.applyUserPreferences(
+                        getFiles(), restrictions, true, chRooted), new Query().fillSlots(mQueries));
+
+        clear();
+        for (SearchResult result : newResults) {
+            // Only show results that are within our category, or all if no filter is set
+            if (TextUtils.equals(mimeFilter, MimeTypeHelper.MimeTypeCategory.NONE.name()) ||
+                    MimeTypeHelper.getCategory(getContext(), result.getFso()) ==
+                            MimeTypeHelper.MimeTypeCategory.valueOf(mimeFilter)) {
+                add(result);
+            }
+        }
+
+        this.notifyDataSetChanged();
+    }
+
+    /**
      * Method that dispose the elements of the adapter.
      */
     public void dispose() {
@@ -164,6 +213,7 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
         }
         this.mDisposed = true;
         clear();
+        this.mOriginalList.clear();
         this.mData = null;
         this.mIconHolder = null;
     }
@@ -201,6 +251,7 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
             } else {
                 this.mData[i].mRelevance = null;
             }
+            this.mData[i].mimeTypeCategory = MimeTypeHelper.getCategory(getContext(), fso);
         }
     }
 
@@ -214,6 +265,19 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
         final List<SearchResult> data = new ArrayList<SearchResult>(cc);
         for (int i = 0; i < cc; i++) {
             data.add(getItem(i));
+        }
+        return data;
+    }
+
+    /**
+     * Method that returns the files of the adapter.
+     *
+     * @return List<FileSystemObject> The adapter data
+     */
+    public List<FileSystemObject> getFiles()  {
+        final List<FileSystemObject> data = new ArrayList<FileSystemObject>();
+        for (SearchResult result : mOriginalList) {
+            data.add(result.getFso());
         }
         return data;
     }
@@ -243,38 +307,37 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
 
         //Check to reuse view
         View v = convertView;
+
         if (v == null) {
             //Create the view holder
             LayoutInflater li =
-                    (LayoutInflater)getContext().getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+                    (LayoutInflater) getContext().getSystemService(Context.LAYOUT_INFLATER_SERVICE);
             v = li.inflate(this.mItemViewResourceId, parent, false);
             ViewHolder viewHolder = new SearchResultAdapter.ViewHolder();
-            viewHolder.mIvIcon = (ImageView)v.findViewById(RESOURCE_ITEM_ICON);
-            viewHolder.mTvName = (TextView)v.findViewById(RESOURCE_ITEM_NAME);
-            viewHolder.mTvParentDir = (TextView)v.findViewById(RESOURCE_ITEM_PARENT_DIR);
-            viewHolder.mWgRelevance = (RelevanceView)v.findViewById(RESOURCE_ITEM_RELEVANCE);
-            v.setTag(viewHolder);
+            viewHolder.mIvIcon = (ImageView) v.findViewById(RESOURCE_ITEM_ICON);
+            viewHolder.mTvName = (TextView) v.findViewById(RESOURCE_ITEM_NAME);
+            viewHolder.mTvParentDir = (TextView) v.findViewById(RESOURCE_ITEM_PARENT_DIR);
+            viewHolder.mWgRelevance = (RelevanceView) v.findViewById(RESOURCE_ITEM_RELEVANCE);
+            viewHolder.mMimeType = (TextView) v.findViewById(RESOURCE_ITEM_MIME_TYPE);
 
             // Apply the current theme
             Theme theme = ThemeManager.getCurrentTheme(getContext());
-            theme.setBackgroundDrawable(
-                    getContext(), v, "selectors_deselected_drawable"); //$NON-NLS-1$
             theme.setTextColor(
                     getContext(), viewHolder.mTvName, "text_color"); //$NON-NLS-1$
             if (viewHolder.mTvParentDir != null) {
                 theme.setTextColor(
                         getContext(), viewHolder.mTvParentDir, "text_color"); //$NON-NLS-1$
             }
+            v.setTag(viewHolder);
         }
 
         //Retrieve data holder
         final DataHolder dataHolder = this.mData[position];
 
         //Retrieve the view holder
-        ViewHolder viewHolder = (ViewHolder)v.getTag();
+        ViewHolder viewHolder = (ViewHolder) v.getTag();
 
         //Set the data
-
         if (convertView != null) {
             mIconHolder.cancelLoad(viewHolder.mIvIcon);
         }
@@ -288,9 +351,13 @@ public class SearchResultAdapter extends ArrayAdapter<SearchResult> {
         }
         viewHolder.mWgRelevance.setVisibility(
                 dataHolder.mRelevance != null ? View.VISIBLE : View.GONE);
-
+        if (dataHolder.mimeTypeCategory != MimeTypeHelper.MimeTypeCategory.NONE) {
+            viewHolder.mMimeType.setVisibility(View.VISIBLE);
+            viewHolder.mMimeType.setText(dataHolder.mimeTypeCategory.name());
+        } else {
+            viewHolder.mMimeType.setVisibility(View.GONE);
+        }
         //Return the view
         return v;
     }
-
 }

@@ -111,7 +111,35 @@ public final class MimeTypeHelper {
         /**
          * Security file (certificate, keys, ...)
          */
-        SECURITY
+        SECURITY;
+
+        public static String[] names() {
+            MimeTypeCategory[] categories = values();
+            String[] names = new String[categories.length];
+
+            for (int i = 0; i < categories.length; i++) {
+                names[i] = categories[i].name();
+            }
+
+            return names;
+        }
+
+        public static String[] getFriendlyLocalizedNames(Context context) {
+            MimeTypeCategory[] categories = values();
+            String[] localizedNames = new String[categories.length];
+
+            for (int i = 0; i < categories.length; i++) {
+                String description = getCategoryDescription(context, categories[i]);
+                if (TextUtils.equals("-", description)) {
+                    description = context.getString(R.string.category_all);
+                }
+                description = description.substring(0, 1).toUpperCase()
+                        + description.substring(1).toLowerCase();
+                localizedNames[i] = description;
+            }
+
+            return localizedNames;
+        }
     }
 
     /**
@@ -586,6 +614,39 @@ public final class MimeTypeHelper {
          */
         public static boolean isVideo(Context context, FileSystemObject fso) {
             return MimeTypeHelper.getCategory(context, fso).compareTo(MimeTypeCategory.VIDEO) == 0;
+        }
+
+        /**
+         * Method that returns if the File is an image file.
+         *
+         * @param context The current context
+         * @param file The File to check
+         * @return boolean If the File is an image file.
+         */
+        public static boolean isImage(Context context, File file) {
+            return MimeTypeHelper.getCategory(context, file).compareTo(MimeTypeCategory.IMAGE) == 0;
+        }
+
+        /**
+         * Method that returns if the File is an video file.
+         *
+         * @param context The current context
+         * @param file The File to check
+         * @return boolean If the File is an video file.
+         */
+        public static boolean isVideo(Context context, File file) {
+            return MimeTypeHelper.getCategory(context, file).compareTo(MimeTypeCategory.VIDEO) == 0;
+        }
+
+        /**
+         * Method that returns if the File is an audio file.
+         *
+         * @param context The current context
+         * @param file The File to check
+         * @return boolean If the File is an audio file.
+         */
+        public static boolean isAudio(Context context, File file) {
+            return MimeTypeHelper.getCategory(context, file).compareTo(MimeTypeCategory.AUDIO) == 0;
         }
     }
 }
